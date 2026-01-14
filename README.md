@@ -66,6 +66,23 @@ We plan to fully implement the **Hierarchical Framework** as illustrated in the 
 
 By tightly coupling the high-level LLM planner with the low-level Bayesian Optimization engine, we aim to combine strategic reasoning with pixel-level execution precision, ultimately pushing the agent towards human-level proficiency.
 
+
+## Algorithmic Agents
+If you are aiming for a higher and more stable winning rate, we also provide traditional algorithmic agents. 
+We have implemented the following algorithmic agents:
+
+- GeometricAgent
+- Enhanced_Bayes_Agent(NewAgent)
+- MCTSAgent
+- EnsembleVotingAgent
+
+
+You can find their implementation here:[Algorithmic Agents](/agent/AlgorithmicAgent/AlgorithmicAgents.py)
+
+Their empirical winning rates are shown below:
+![winning rate](/images/different_model_performance_comparison.png)
+
+
 ## Contact
 
 Please direct to **`passerby_zzz@sjtu.edu.cn`** for any questions or suggestions. We welcome any **`Issues`** and **`Pull requests`**!
