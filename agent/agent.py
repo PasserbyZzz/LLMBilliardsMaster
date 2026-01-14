@@ -25,10 +25,10 @@ class Agent():
                 a, b: [-0.5, 0.5] (fractions of ball radius)
         """
         action = {
-            'V0': round(random.uniform(0.5, 8.0), 2),   # 初速度 0.5~8.0 m/s
-            'phi': round(random.uniform(0, 360), 2),    # 水平角度 (0°~360°)
-            'theta': round(random.uniform(0, 90), 2),   # 垂直角度
-            'a': round(random.uniform(-0.5, 0.5), 3),   # 杆头横向偏移 (单位：球半径比例)
-            'b': round(random.uniform(-0.5, 0.5), 3)    # 杆头纵向偏移 (单位：球半径比例)
+            'V0': round(random.uniform(0.5, 8.0), 2),   # initial speed (0.5–8.0 m/s)
+            'phi': round(random.uniform(0, 360), 2),    # horizontal angle (0°–360°)
+            'theta': round(random.uniform(0, 90), 2),   # vertical angle (elevation)
+            'a': round(random.uniform(-0.5, 0.5), 3),   # cue lateral offset (fraction of ball radius)
+            'b': round(random.uniform(-0.5, 0.5), 3)    # cue longitudinal offset (fraction of ball radius)
         }
         return action

@@ -73,15 +73,19 @@ def analyze_shot_for_reward(shot: pt.System, last_state: dict, player_targets: l
         et = str(e.event_type).lower()
         ids = list(e.ids) if hasattr(e, 'ids') else []
         if ('cushion' not in et) and ('pocket' not in et) and ('cue' in ids):
+            # Filter out 'cue' and non-ball objects (e.g., 'cue stick'), keep only valid ball IDs
             other_ids = [i for i in ids if i != 'cue' and i in valid_ball_ids]
             if other_ids:
                 first_contact_ball_id = other_ids[0]
                 break
 
+    # foul first hit analysis: fully aligned with player_targets
     if first_contact_ball_id is None:
+        # No ball hit (but if only cue and 8 remain and cleared, no foul)
         if len(last_state) > 2 or player_targets != ['8']:
             foul_first_hit = True
     else:
+        # The first ball hit must be one of the player_targets
         if first_contact_ball_id not in player_targets:
             foul_first_hit = True
 
