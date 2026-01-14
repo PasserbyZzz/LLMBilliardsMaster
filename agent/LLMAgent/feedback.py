@@ -14,13 +14,13 @@ class FeedbackManager:
         pass
 
     def give_feedback(self, action: dict, balls: dict, my_targets: list, table) -> tuple:
-        # 深拷贝环境
+        # deep-copy environment for simulation
         sim_balls = {bid: copy.deepcopy(ball) for bid, ball in balls.items()}
         sim_table = copy.deepcopy(table)
         cue = pt.Cue(cue_ball_id="cue")
         shot = pt.System(table=sim_table, balls=sim_balls, cue=cue)
 
-        # 施加动作
+        # apply action
         V0 = float(action['V0'])
         phi = float(action['phi'])
         theta = float(action['theta'])
@@ -28,13 +28,13 @@ class FeedbackManager:
         b = float(action['b'])
         shot.cue.set_state(V0=V0, phi=phi, theta=theta, a=a, b=b)
 
-        # 运行仿真
+        # run simulation
         pt.simulate(shot, inplace=True)
 
-        # 分析仿真结果
+        # analyze simulation results
         new_pocketed = [bid for bid, b in shot.balls.items() if b.state.s == 4 and balls[bid].state.s != 4]
 
-        # 找到首触球
+        # find first contact ball
         first_contact_ball_id = None
         for e in shot.events:
             et = str(e.event_type).lower()
@@ -47,11 +47,11 @@ class FeedbackManager:
 
         messages = []
 
-        # 空杆未触球
+        # no-contact case
         if first_contact_ball_id is None and len(balls) > 2:
             messages.append("No contact: cue ball did not hit any object ball.")
 
-        # 首触犯规
+        # first-contact foul checks
         remaining_own_before = [bid for bid in my_targets if balls[bid].state.s != 4]
         opponent_plus_eight = [bid for bid in balls.keys() if bid not in my_targets and bid != 'cue']
         if '8' not in opponent_plus_eight:
@@ -67,7 +67,7 @@ class FeedbackManager:
             if len(remaining_own_before) == 0 and first_contact_ball_id != '8':
                 FOUL_FIRST_HIT = True
 
-        # 未碰库犯规
+        # no-rail foul checks
         cue_hit_cushion = False
         target_hit_cushion = False
         for e in shot.events:
@@ -82,13 +82,13 @@ class FeedbackManager:
         NO_POCKET_NO_RAIL = (len(new_pocketed) == 0 and (not cue_hit_cushion) and (not target_hit_cushion))
         NO_HIT = (first_contact_ball_id is None)
 
-        # 进袋情况
+        # pocketing summary
         ME_INTO_POCKET = [bid for bid in new_pocketed if bid in my_targets]
         ENEMY_INTO_POCKET = [bid for bid in new_pocketed if bid not in my_targets and bid not in ["cue", "8"]]
         WHITE_BALL_INTO_POCKET = ('cue' in new_pocketed)
         BLACK_BALL_INTO_POCKET = ('8' in new_pocketed)
 
-        # 立即判负
+        # immediate loss checks
         immediate_loss = False
         immediate_reasons = []
         if WHITE_BALL_INTO_POCKET and BLACK_BALL_INTO_POCKET:
@@ -98,7 +98,7 @@ class FeedbackManager:
             immediate_loss = True
             immediate_reasons.append('8_before_clearing')
 
-        # 构建反馈字典
+        # build feedback dictionary (flags)
         # flags = {
         #     'ME_INTO_POCKET': ME_INTO_POCKET,
         #     'ENEMY_INTO_POCKET': ENEMY_INTO_POCKET,
@@ -111,20 +111,20 @@ class FeedbackManager:
         #     'IMMEDIATE_REASONS': immediate_reasons,
         # }
 
-        # 目标是否被打进
+        # whether specified target was pocketed
         target = action.get('Target') if isinstance(action, dict) else None
         target_pocketed = False
         if target:
             target_pocketed = (target in ME_INTO_POCKET) or (target in ENEMY_INTO_POCKET) or (target == 'cue' and WHITE_BALL_INTO_POCKET) or (target == '8' and BLACK_BALL_INTO_POCKET)
 
-        # 立即判负
+        # immediate loss messages
         if immediate_loss:
             if 'cue_and_8_same_shot' in immediate_reasons:
                 messages.append('Cue and 8-ball pocketed together: immediate game loss.')
             if '8_before_clearing' in immediate_reasons:
                 messages.append('8-ball pocketed before clearing your group: immediate game loss.')
 
-        # 非立即判负的犯规或警告
+        # non-immediate fouls or warnings
         if WHITE_BALL_INTO_POCKET and not BLACK_BALL_INTO_POCKET:
             messages.append('Cue ball pocketed: foul.')
         if FOUL_FIRST_HIT:
@@ -134,7 +134,7 @@ class FeedbackManager:
         if NO_POCKET_NO_RAIL:
             messages.append('No pocket and no cushion contact: foul.')
 
-        # 合法情形的信息
+        # messages for legal outcomes
         if not messages and not immediate_loss:
             if ME_INTO_POCKET:
                 messages.append(f'Pocketed own balls: {ME_INTO_POCKET}. Continue turn.')
@@ -146,7 +146,7 @@ class FeedbackManager:
                 else:
                     messages.append('No balls pocketed.')
 
-        # 指定了目标球，若目标未被打进，但有其他己方球进袋，视为可执行
+        # If a target was specified: consider execution valid if other own balls were pocketed
         if target:
             if target_pocketed:
                 messages.append(f'Target {target} pocketed.')
@@ -162,7 +162,7 @@ class FeedbackManager:
 
         ready = (not immediate_loss and not FOUL_FIRST_HIT and not NO_POCKET_NO_RAIL and not NO_HIT and not WHITE_BALL_INTO_POCKET and target_ok)
 
-        # 构建 [Simulation Feedback]
+        # construct [Simulation Feedback]
         feedback_lines = []
         feedback_lines.append("[Simulation Feedback]")
         feedback_lines.append(f"- Previous Action: V0={V0}, phi={phi}, theta={theta}, a={a}, b={b}")
@@ -221,13 +221,13 @@ if __name__ == "__main__":
         print(f"--- {name} ---")
         fake_pt = FakePt()
 
-        # System 构造器：忽略传入的 balls，返回带有 sim_balls 和 events 的 FakeSystem
+        # System constructor: ignore passed-in balls, return FakeSystem using sim_balls and events
         def system_ctor(table=None, balls=None, cue=None):
             return FakeSystem(table=table, balls=sim_balls, cue=FakeCue(), events=events)
 
         fake_pt.System = system_ctor
 
-        # 将模块级 pt 替换为 fake_pt
+        # replace module-level pt with fake_pt for testing
         globals()['pt'] = fake_pt
 
         fm = FeedbackManager()

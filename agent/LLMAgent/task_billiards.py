@@ -206,19 +206,19 @@ class BilliardsTask:
         return report
     
     def get_obs(self, balls, my_targets, table) -> dict:
-        # 构建观测字典
+        # build observation dictionary
         balls_data = {}
         
-        # 统计剩余的球
+        # remaining balls lists
         remaining_solids = []
         remaining_stripes = []
         
-        # 实心球 ID 范围 '1'-'7'
+        # solid ball IDs '1'-'7'
         solid_ids = [str(i) for i in range(1, 8)]
-        # 条纹球 ID 范围 '9'-'15'
+        # stripe ball IDs '9'-'15'
         stripe_ids = [str(i) for i in range(9, 16)]
 
-        # 获取观测：场上剩余球的坐标
+        # gather positions of balls still on the table
         for bid, ball in balls.items():
             if ball.state.s != 4:
                 pos = ball.state.rvw[0]
@@ -304,7 +304,7 @@ class BilliardsTask:
         balls_desc = f"Currently, the Cue Ball is at {cue_str}."
 
         def format_balls(bids):
-            # 按数字大小排序 ID
+            # sort IDs numerically
             sorted_bids = sorted(bids, key=lambda x: int(x))
             items = []
             for bid in sorted_bids:

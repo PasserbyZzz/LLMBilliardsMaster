@@ -84,8 +84,8 @@ class Prompter:
     ) -> tuple:
         # Send one request to the LLM
 
-        response = None # LLM 的原始响应
-        usage = None # LLM 的使用情况
+        response = None  # raw LLM response
+        usage = None     # LLM usage info
         # print('======= system prompt ======= \n ', system_prompt)
         # print('======= user prompt ======= \n ', user_prompt)
 

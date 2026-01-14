@@ -256,7 +256,7 @@ class BasicAgentPro(Agent):
         N = np.zeros(n_candidates)
         Q = np.zeros(n_candidates)
         
-        # MCTS 循环
+        # MCTS loop
         for i in range(self.n_simulations):
             # Selection (UCB)
             if i < n_candidates:

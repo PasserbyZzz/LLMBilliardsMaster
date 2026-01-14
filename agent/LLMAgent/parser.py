@@ -29,7 +29,7 @@ class Parser:
                 if not line: 
                     continue
                 
-                # 查找 Key: Value 模式
+                # find Key: Value pattern
                 if ':' in line:
                     parts = line.split(':', 1)
                     if len(parts) != 2: 
@@ -38,41 +38,41 @@ class Parser:
                     key = parts[0].strip()
                     value_str = parts[1].strip()
                     
-                    # 处理数值参数
+                    # handle numeric parameters
                     if key in ['V0', 'phi', 'theta', 'a', 'b']:
                         try:
-                            # 提取第一个数值（防止后面有注释）
-                            # 使用正则提取浮点数
+                            # extract first numeric value (ignore trailing comments)
+                            # extract float using regex
                             num_match = re.search(r"[-+]?\d*\.\d+|[-+]?\d+", value_str)
                             if num_match:
                                 action[key] = float(num_match.group())
                         except ValueError:
                             pass
-                    # 处理目标球字段
+                    # handle target field
                     elif key.lower() in ['target', 'targetball', 'target_ball']:
-                        # 允许数值或字符串，如 3 或 '3' 或 8
-                        # 只在能解析到数字 ID 时设置 Target，其他情况（如 'None'、'safety'）则不设置
+                        # allow numeric or quoted string (e.g., 3 or '3' or 8)
+                        # only set Target when a numeric ID can be parsed
                         val = value_str.strip().strip("'\"")
                         num_match = re.search(r"\d+", val)
                         if num_match:
                             action['Target'] = str(num_match.group())
-                    # 处理推理文本
+                    # handle reasoning text
                     elif key.lower() == 'reasoning':
                         action['reasoning'] = value_str
 
             # Validation
             if not action:
                 return False, "Action is None or empty", None
-            # key 检查
+            # key presence check
             required_keys = ['V0', 'phi', 'theta', 'a', 'b']
             for key in required_keys:
                 if key not in action:
                     return False, f"Missing key: {key}", None
-            # target 检查
+            # target existence check
             if 'Target' in action:
                 if action['Target'] not in balls:
                     return False, f"Target {action['Target']} doesn't exist on the table.", None
-            # 范围检查
+            # range checks
             if not (0.5 <= action['V0'] <= 8.0):
                 return False, f"V0={action['V0']} out of range [0.5, 8.0]", None
             if not (0 <= action['phi'] <= 360):
