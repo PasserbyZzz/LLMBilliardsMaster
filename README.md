@@ -6,4 +6,4 @@ Codebase for paper: RoCo: Dialectic Multi-Robot Collaboration with Large Languag
 
 [Paper](https://github.com/PasserbyZzz/LLMBilliardsMaster/blob/main/report/LLMBilliardsMaster.pdf)
 
-![Spectrum Comparison](https://github.com/PasserbyZzz/TapSignalClassifier/blob/main/figures/spectrum_comparison.png)
+![Pipeline](https://github.com/PasserbyZzz/LLMBilliardsMaster/blob/main/images/llm_pipeline.png)
