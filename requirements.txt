@@ -1,0 +1,5 @@
+numpy
+pooltool
+openai
+bayesian-optimization
+scikit-learn
