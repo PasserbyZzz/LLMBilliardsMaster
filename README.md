@@ -46,7 +46,7 @@ client = openai.OpenAI(api_key=OPENAI_KEY, base_url="https://dashscope.aliyuncs.
 
 ### Run an evaluation (LLMAgent vs BasicAgent)
 
-```python
+```bash
 python scripts/evaluate.py
 ```
 
