@@ -15,45 +15,45 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 
 
-# ============ 超时安全模拟机制 ============
+# ============ Timeout-safe simulation mechanism ============
 class SimulationTimeoutError(Exception):
-    """物理模拟超时异常"""
+    """Physics simulation timeout exception"""
     pass
 
 def _timeout_handler(signum, frame):
-    """超时信号处理器"""
-    raise SimulationTimeoutError("物理模拟超时")
+    """Timeout signal handler"""
+    raise SimulationTimeoutError("Physics simulation timed out")
 
 def simulate_with_timeout(shot, timeout=3):
-    """带超时保护的物理模拟
+    """Physics simulation with a timeout safeguard
     
-    参数：
-        shot: pt.System 对象
-        timeout: 超时时间（秒），默认3秒
+    Args:
+        shot: pt.System instance
+        timeout: Timeout in seconds (default: 3)
     
-    返回：
-        bool: True 表示模拟成功，False 表示超时或失败
+    Returns:
+        bool: True if the simulation succeeds; False if it times out or fails
     
-    说明：
-        使用 signal.SIGALRM 实现超时机制（仅支持 Unix/Linux）
-        超时后自动恢复，不会导致程序卡死
+    Notes:
+        Uses signal.SIGALRM to enforce a timeout (Unix/Linux only).
+        Automatically recovers after a timeout to avoid the program hanging.
     """
-    # 设置超时信号处理器
+    # Install timeout signal handler
     old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(timeout)  # 设置超时时间
+    signal.alarm(timeout)  # Set timeout
     
     try:
         pt.simulate(shot, inplace=True)
-        signal.alarm(0)  # 取消超时
+        signal.alarm(0)  # Cancel timeout
         return True
     except SimulationTimeoutError:
-        print(f"[WARNING] 物理模拟超时（>{timeout}秒），跳过此次模拟")
+        print(f"[WARNING] Physics simulation timed out (>{timeout}s); skipping this simulation")
         return False
     except Exception as e:
-        signal.alarm(0)  # 取消超时
+        signal.alarm(0)  # Cancel timeout
         raise e
     finally:
-        signal.signal(signal.SIGALRM, old_handler)  # 恢复原处理器
+        signal.signal(signal.SIGALRM, old_handler)  # Restore previous handler
 
 # ============================================
 
@@ -61,34 +61,34 @@ def simulate_with_timeout(shot, timeout=3):
 
 def analyze_shot_for_reward(shot: pt.System, last_state: dict, player_targets: list):
     """
-    分析击球结果并计算奖励分数（完全对齐台球规则）
+    Analyze the shot outcome and compute a reward score (aligned with eight-ball rules)
     
-    参数：
-        shot: 已完成物理模拟的 System 对象
-        last_state: 击球前的球状态，{ball_id: Ball}
-        player_targets: 当前玩家目标球ID，['1', '2', ...] 或 ['8']
+    Args:
+        shot: System instance after physics simulation
+        last_state: Ball states before the shot, {ball_id: Ball}
+        player_targets: Current player's target ball IDs, ['1','2',...] or ['8']
     
-    返回：
-        float: 奖励分数
-            +50/球（己方进球）, +100（合法黑8）, +10（合法无进球）
-            -100（白球进袋）, -500（非法黑8/白球+黑8）, -30（首球/碰库犯规）
+    Returns:
+        float: Reward score
+            +50 per own ball pocketed, +100 for a legal 8-ball, +10 for a legal no-pot shot
+            -100 for cue ball pocketed, -500 for an illegal 8-ball / cue+8, -30 for first-hit/rail foul
     
-    规则核心：
-        - 清台前：player_targets = ['1'-'7'] 或 ['9'-'15']，黑8不属于任何人
-        - 清台后：player_targets = ['8']，黑8成为唯一目标球
+    Core rules:
+        - Before clearing your set: player_targets = ['1'-'7'] or ['9'-'15']; the 8-ball belongs to neither player
+        - After clearing your set: player_targets = ['8']; the 8-ball becomes the only target
     """
     
-    # 1. 基本分析
+    # 1. Basic analysis
     new_pocketed = [bid for bid, b in shot.balls.items() if b.state.s == 4 and last_state[bid].state.s != 4]
     
-    # 根据 player_targets 判断进球归属（黑8只有在清台后才算己方球）
+    # Determine ownership based on player_targets (the 8-ball counts as "own" only after clearing)
     own_pocketed = [bid for bid in new_pocketed if bid in player_targets]
     enemy_pocketed = [bid for bid in new_pocketed if bid not in player_targets and bid not in ["cue", "8"]]
     
     cue_pocketed = "cue" in new_pocketed
     eight_pocketed = "8" in new_pocketed
 
-    # 2. 分析首球碰撞（定义合法的球ID集合）
+    # 2. Analyze first contact (define a valid set of ball IDs)
     first_contact_ball_id = None
     foul_first_hit = False
     valid_ball_ids = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'}
@@ -97,23 +97,23 @@ def analyze_shot_for_reward(shot: pt.System, last_state: dict, player_targets: l
         et = str(e.event_type).lower()
         ids = list(e.ids) if hasattr(e, 'ids') else []
         if ('cushion' not in et) and ('pocket' not in et) and ('cue' in ids):
-            # 过滤掉 'cue' 和非球对象（如 'cue stick'），只保留合法的球ID
+            # Filter out 'cue' and non-ball objects (e.g., 'cue stick'); keep only valid ball IDs
             other_ids = [i for i in ids if i != 'cue' and i in valid_ball_ids]
             if other_ids:
                 first_contact_ball_id = other_ids[0]
                 break
     
-    # 首球犯规判定：完全对齐 player_targets
+    # First-hit foul: strictly aligned with player_targets
     if first_contact_ball_id is None:
-        # 未击中任何球（但若只剩白球和黑8且已清台，则不算犯规）
+        # Did not hit any ball (except when only cue+8 remain and the table is cleared)
         if len(last_state) > 2 or player_targets != ['8']:
             foul_first_hit = True
     else:
-        # 首次击打的球必须是 player_targets 中的球
+        # The first ball contacted must be in player_targets
         if first_contact_ball_id not in player_targets:
             foul_first_hit = True
     
-    # 3. 分析碰库
+    # 3. Analyze rail contact
     cue_hit_cushion = False
     target_hit_cushion = False
     foul_no_rail = False
@@ -130,7 +130,7 @@ def analyze_shot_for_reward(shot: pt.System, last_state: dict, player_targets: l
     if len(new_pocketed) == 0 and first_contact_ball_id is not None and (not cue_hit_cushion) and (not target_hit_cushion):
         foul_no_rail = True
         
-    # 计算奖励分数
+    # Compute reward score
     score = 0
     
     if cue_pocketed and eight_pocketed:
@@ -155,43 +155,43 @@ def analyze_shot_for_reward(shot: pt.System, last_state: dict, player_targets: l
     return score
 
 class Agent():
-    """Agent 基类"""
+    """Agent base class"""
     def __init__(self):
         pass
     
     def decision(self, *args, **kwargs):
-        """决策方法（子类需实现）
+        """Decision method (must be implemented by subclasses)
         
-        返回：dict, 包含 'V0', 'phi', 'theta', 'a', 'b'
+        Returns: dict with keys 'V0', 'phi', 'theta', 'a', 'b'
         """
         pass
     
     def _random_action(self,):
-        """生成随机击球动作
+        """Generate a random shot action
         
-        返回：dict
+        Returns: dict
             V0: [0.5, 8.0] m/s
-            phi: [0, 360] 度
-            theta: [0, 90] 度
-            a, b: [-0.5, 0.5] 球半径比例
+            phi: [0, 360] degrees
+            theta: [0, 90] degrees
+            a, b: [-0.5, 0.5] as a fraction of ball radius
         """
         action = {
-            'V0': round(random.uniform(0.5, 8.0), 2),   # 初速度 0.5~8.0 m/s
-            'phi': round(random.uniform(0, 360), 2),    # 水平角度 (0°~360°)
-            'theta': round(random.uniform(0, 90), 2),   # 垂直角度
-            'a': round(random.uniform(-0.5, 0.5), 3),   # 杆头横向偏移（单位：球半径比例）
-            'b': round(random.uniform(-0.5, 0.5), 3)    # 杆头纵向偏移
+            'V0': round(random.uniform(0.5, 8.0), 2),   # Initial speed: 0.5–8.0 m/s
+            'phi': round(random.uniform(0, 360), 2),    # Horizontal angle (0°–360°)
+            'theta': round(random.uniform(0, 90), 2),   # Vertical angle
+            'a': round(random.uniform(-0.5, 0.5), 3),   # Tip lateral offset (fraction of ball radius)
+            'b': round(random.uniform(-0.5, 0.5), 3)    # Tip vertical offset (fraction of ball radius)
         }
         return action
 
 
 class Enhanced_Bayes_Agent(Agent): 
-    """NewAgent（几何引导 + 贝叶斯优化 + 增强安全策略）"""
+    """NewAgent (geometry-guided + Bayesian optimization + enhanced safety strategy)"""
     
     def __init__(self):
         super().__init__()
         
-        # 导入几何工具
+        # Import geometry utilities
         from utils.utils import (
             select_best_target,
             calculate_aim_point_for_pocket,
@@ -217,59 +217,59 @@ class Enhanced_Bayes_Agent(Agent):
         self.predict_first_contact_ball = predict_first_contact_ball
         self.check_eight_ball_scratch_risk = check_eight_ball_scratch_risk
         
-        # 贝叶斯优化参数（优化后）
-        self.INITIAL_SEARCH = 30  # 增加初始采样
-        self.OPT_SEARCH = 15    # 增加优化迭代
-        self.ALPHA = 5e-4         # 降低噪声
+        # Bayesian optimization parameters (tuned)
+        self.INITIAL_SEARCH = 30  # Increase initial sampling
+        self.OPT_SEARCH = 15    # Increase optimization iterations
+        self.ALPHA = 5e-4         # Reduce noise
         
-        # 几何搜索参数（收紧搜索范围）
-        self.phi_range = 40       # 角度搜索范围 ±40°（从75°缩小）
-        self.V0_range = 2.0       # 速度搜索范围 ±2.0 m/s（从3.0缩小）
-        self.theta_max = 45       # 最大仰角（从60°缩小）
-        self.offset_range = 0.30  # 击球点偏移范围（从0.40缩小）
+        # Geometry search parameters (tightened search bounds)
+        self.phi_range = 40       # Angle search range ±40° (reduced from 75°)
+        self.V0_range = 2.0       # Speed search range ±2.0 m/s (reduced from 3.0)
+        self.theta_max = 45       # Max elevation angle (reduced from 60°)
+        self.offset_range = 0.30  # Tip offset range (reduced from 0.40)
         
-        # 黑八避让参数（增强惩罚）
-        self.eight_ball_penalty = 400    # 误打黑八的惩罚（提高）
-        self.wrong_ball_penalty = 250    # 误打对方球的惩罚（提高）
-        self.cue_pocket_penalty = 350    # 白球落袋惩罚（新增）
-        self.scratch_eight_penalty = 600 # 白球+黑8同时落袋惩罚（新增，致命）
+        # 8-ball avoidance parameters (stronger penalties)
+        self.eight_ball_penalty = 400    # Penalty for illegally hitting the 8-ball (increased)
+        self.wrong_ball_penalty = 250    # Penalty for hitting an opponent ball first (increased)
+        self.cue_pocket_penalty = 350    # Penalty for cue ball pocketed (added)
+        self.scratch_eight_penalty = 600 # Penalty for cue ball + 8-ball pocketed together (added, fatal)
         
-        # 打黑8时的特殊保守参数
-        self.eight_ball_V0_max = 5.0     # 打黑8时最大速度
-        self.eight_ball_theta_max = 25   # 打黑8时最大仰角
-        self.eight_ball_offset_range = 0.20  # 打黑8时偏移范围
+        # Conservative parameters when shooting the 8-ball
+        self.eight_ball_V0_max = 5.0     # Max speed when shooting the 8-ball
+        self.eight_ball_theta_max = 25   # Max elevation when shooting the 8-ball
+        self.eight_ball_offset_range = 0.20  # Tip offset range when shooting the 8-ball
         
-        print("Enhanced_BayesAgent (Geometry-Guided Bayesian Optimization v2) 已初始化。")
+        print("Enhanced_BayesAgent (Geometry-Guided Bayesian Optimization v2) initialized.")
     
     def print_config(self):
-        """打印所有重要超参数"""
+        """Print all important hyperparameters"""
         print("\n" + "="*50)
-        print("[Enhanced_BayesAgent 超参数配置]")
-        print(f"  贝叶斯优化参数:")
-        print(f"    - INITIAL_SEARCH (初始随机采样): {self.INITIAL_SEARCH}")
-        print(f"    - OPT_SEARCH (贝叶斯优化迭代): {self.OPT_SEARCH}")
-        print(f"    - ALPHA (高斯过程噪声): {self.ALPHA}")
-        print(f"  几何启发式参数:")
-        print(f"    - phi_range (角度搜索范围): ±{self.phi_range}°")
-        print(f"    - V0_range (速度搜索范围): ±{self.V0_range} m/s")
-        print(f"    - theta_max (最大仰角): {self.theta_max}°")
-        print(f"    - offset_range (击球点偏移): ±{self.offset_range}")
-        print(f"  惩罚参数:")
-        print(f"    - eight_ball_penalty (误打黑8): {self.eight_ball_penalty}")
-        print(f"    - wrong_ball_penalty (误打对方球): {self.wrong_ball_penalty}")
-        print(f"    - cue_pocket_penalty (白球落袋): {self.cue_pocket_penalty}")
-        print(f"    - scratch_eight_penalty (白球+黑8同落): {self.scratch_eight_penalty}")
-        print(f"  打黑8特殊参数:")
+        print("[Enhanced_BayesAgent Hyperparameter Configuration]")
+        print("  Bayesian optimization parameters:")
+        print(f"    - INITIAL_SEARCH (initial random samples): {self.INITIAL_SEARCH}")
+        print(f"    - OPT_SEARCH (BO iterations): {self.OPT_SEARCH}")
+        print(f"    - ALPHA (GP noise): {self.ALPHA}")
+        print("  Geometry heuristic parameters:")
+        print(f"    - phi_range (angle search range): ±{self.phi_range}°")
+        print(f"    - V0_range (speed search range): ±{self.V0_range} m/s")
+        print(f"    - theta_max (max elevation): {self.theta_max}°")
+        print(f"    - offset_range (tip offset): ±{self.offset_range}")
+        print("  Penalty parameters:")
+        print(f"    - eight_ball_penalty (illegal 8-ball hit): {self.eight_ball_penalty}")
+        print(f"    - wrong_ball_penalty (wrong first ball): {self.wrong_ball_penalty}")
+        print(f"    - cue_pocket_penalty (cue ball pocketed): {self.cue_pocket_penalty}")
+        print(f"    - scratch_eight_penalty (cue + 8 pocketed): {self.scratch_eight_penalty}")
+        print("  8-ball special parameters:")
         print(f"    - eight_ball_V0_max: {self.eight_ball_V0_max} m/s")
         print(f"    - eight_ball_theta_max: {self.eight_ball_theta_max}°")
         print(f"    - eight_ball_offset_range: ±{self.eight_ball_offset_range}")
         print("="*50)
     
     def _analyze_first_contact(self, shot, valid_ball_ids):
-        """分析击球后的首次碰撞
+        """Analyze the first collision after the shot
         
-        返回：
-            first_contact_ball_id: 首次碰撞的球ID
+        Returns:
+            first_contact_ball_id: ID of the first ball contacted
         """
         for e in shot.events:
             et = str(e.event_type).lower()
@@ -281,59 +281,59 @@ class Enhanced_Bayes_Agent(Agent):
         return None
     
     def decision(self, balls=None, my_targets=None, table=None):
-        """基于几何启发式的决策（增强版v2：白球保护 + 黑八安全击打）
+        """Geometry-guided decision (enhanced v2: cue-ball safety + safe 8-ball play)
         
-        步骤：
-        1. 用几何学选择最容易的目标球和球袋（考虑黑八）
-        2. 计算理想瞄准角度
-        3. 几何预检测：首撞球验证、白球落袋风险
-        4. 在瞄准角度附近用贝叶斯优化搜索（带增强惩罚）
-        5. 打黑8时采用特殊保守策略
+        Steps:
+        1. Use geometry to choose the easiest target ball and pocket (considering the 8-ball)
+        2. Compute the ideal aiming angle
+        3. Geometry pre-checks: first-contact validation and cue-ball scratch risk
+        4. Run Bayesian optimization around the aiming angle (with stronger penalties)
+        5. Use a conservative strategy when shooting the 8-ball
         
-        参数：
-            balls: 球状态字典
-            my_targets: 目标球ID列表
-            table: 球桌对象
+        Args:
+            balls: Ball state dictionary
+            my_targets: List of target ball IDs
+            table: Table object
         
-        返回：
-            dict: 击球动作
+        Returns:
+            dict: Shot action
         """
         if balls is None or my_targets is None or table is None:
-            print("[NewAgent] 缺少必要信息，使用随机动作。")
+            print("[NewAgent] Missing required inputs; using a random action.")
             return self._random_action()
         
         try:
-            # 保存状态快照
+            # Save state snapshot
             last_state_snapshot = {bid: copy.deepcopy(ball) for bid, ball in balls.items()}
             
-            # 检查目标球是否已清空
+            # Check whether all target balls are already pocketed
             remaining_own = [bid for bid in my_targets if balls[bid].state.s != 4]
             is_shooting_eight = False
             if len(remaining_own) == 0:
                 my_targets = ["8"]
                 is_shooting_eight = True
-                print("[NewAgent] 目标球已清空，切换到黑8。⚠️ 进入谨慎模式！")
+                print("[NewAgent] All target balls cleared; switching to the 8-ball. ⚠️ Entering cautious mode!")
             
-            # 步骤1: 几何启发式选择目标（考虑黑八避让）
+            # Step 1: Geometry-based target selection (avoid the 8-ball)
             cue_pos = balls['cue'].state.rvw[0]
             best_target_id, best_pocket_id, difficulty = self.select_best_target(
                 cue_pos, my_targets, balls, table, avoid_eight=True
             )
             
             if best_target_id is None:
-                print("[NewAgent] 未找到有效目标球，使用随机动作。")
+                print("[NewAgent] No valid target found; using a random action.")
                 return self._random_action()
             
             target_pos = balls[best_target_id].state.rvw[0]
             pocket_pos = table.pockets[best_pocket_id].center
             
-            # 检查路径上是否有黑八（用于调整策略）
+            # Check whether the 8-ball lies near the path (to adjust strategy)
             eight_in_path, eight_dist = self.check_eight_ball_in_path(cue_pos, target_pos, balls)
             
-            # 检查白球落袋风险
+            # Check cue-ball scratch risk
             cue_pocket_risk, risky_pocket = self.check_cue_ball_pocket_risk(cue_pos, target_pos, table)
             
-            # 几何预判首撞球
+            # Geometric prediction of first contact ball
             predicted_first, _ = self.predict_first_contact_ball(
                 cue_pos, 
                 self.calculate_angle_to_aim_point(cue_pos, self.calculate_aim_point_for_pocket(cue_pos, target_pos, pocket_pos)),
@@ -342,49 +342,49 @@ class Enhanced_Bayes_Agent(Agent):
             
             warning_msg = ""
             if eight_in_path:
-                warning_msg += " (警告：黑八在路径附近!)"
+                warning_msg += " (Warning: 8-ball near the path!)"
             if cue_pocket_risk > 0.5:
-                warning_msg += f" (警告：白球落袋风险高={cue_pocket_risk:.2f})"
+                warning_msg += f" (Warning: high cue-ball scratch risk={cue_pocket_risk:.2f})"
             if predicted_first and predicted_first != best_target_id:
-                warning_msg += f" (警告：预判首撞={predicted_first})"
+                warning_msg += f" (Warning: predicted first contact={predicted_first})"
             
-            print(f"[NewAgent] 选择目标: {best_target_id} → 球袋: {best_pocket_id}, 难度: {difficulty:.2f}{warning_msg}")
+            print(f"[NewAgent] Selected target: {best_target_id} → pocket: {best_pocket_id}, difficulty: {difficulty:.2f}{warning_msg}")
             
-            # 步骤2: 计算几何瞄准参数
+            # Step 2: Compute geometric aiming parameters
             aim_point = self.calculate_aim_point_for_pocket(cue_pos, target_pos, pocket_pos)
             
             if aim_point is None:
-                print("[NewAgent] 无法计算瞄准点，使用随机动作。")
+                print("[NewAgent] Failed to compute aim point; using a random action.")
                 return self._random_action()
             
-            # 计算理想角度
+            # Compute ideal angle
             ideal_phi = self.calculate_angle_to_aim_point(cue_pos, aim_point)
             
-            # 计算推荐速度
+            # Compute recommended speed
             distance = self.calculate_distance(cue_pos, target_pos)
             ideal_V0 = self.calculate_recommended_velocity(distance)
             
-            # 打黑8时额外检查scratch风险
+            # When shooting the 8-ball, perform an extra scratch-risk check
             scratch_risk = 0.0
             if is_shooting_eight:
                 scratch_risk, risk_type = self.check_eight_ball_scratch_risk(
                     cue_pos, target_pos, pocket_pos, balls
                 )
                 if scratch_risk > 0.3:
-                    print(f"[NewAgent] ⚠️ 打黑8 scratch风险: {scratch_risk:.2f} ({risk_type})，降低力度")
+                    print(f"[NewAgent] ⚠️ 8-ball scratch risk: {scratch_risk:.2f} ({risk_type}); reducing power")
                     ideal_V0 = min(ideal_V0, self.eight_ball_V0_max * (1 - scratch_risk * 0.5))
             
-            print(f"[NewAgent] 几何解: phi={ideal_phi:.2f}°, V0={ideal_V0:.2f} m/s, 距离={distance:.3f}m")
+            print(f"[NewAgent] Geometric solution: phi={ideal_phi:.2f}°, V0={ideal_V0:.2f} m/s, distance={distance:.3f}m")
             
-            # 步骤3: 构建搜索空间（根据路径风险和是否打黑8调整）
+            # Step 3: Build the search space (adjust for path risk and 8-ball shots)
             if is_shooting_eight:
-                # 打黑8时使用更保守的参数
+                # Use more conservative parameters when shooting the 8-ball
                 phi_range = self.phi_range * 0.4
                 V0_range = self.V0_range * 0.5
                 V0_max = self.eight_ball_V0_max
                 theta_max = self.eight_ball_theta_max
                 offset_range = self.eight_ball_offset_range
-                print(f"[NewAgent] 黑8模式：收紧搜索范围 phi±{phi_range:.1f}°, V0±{V0_range:.1f}, θ≤{theta_max}°")
+                print(f"[NewAgent] 8-ball mode: tightened bounds phi±{phi_range:.1f}°, V0±{V0_range:.1f}, θ≤{theta_max}°")
             elif eight_in_path:
                 phi_range = self.phi_range * 0.5
                 V0_range = self.V0_range * 0.7
@@ -398,13 +398,13 @@ class Enhanced_Bayes_Agent(Agent):
                 theta_max = self.theta_max
                 offset_range = self.offset_range
             
-            # 如果白球落袋风险高，进一步限制
+            # If cue-ball scratch risk is high, tighten further
             if cue_pocket_risk > 0.5:
                 V0_max = min(V0_max, 3.5)
                 theta_max = min(theta_max, 25)
                 offset_range *= 0.7
             
-            # 为避免边界收缩为同一点，添加安全边界函数
+            # Add a safety bounds function to avoid collapsing to a single point
             def _safe_bounds(center, span, min_v, max_v, eps=1e-3):
                 low = max(min_v, center - span)
                 high = min(max_v, center + span)
@@ -412,12 +412,12 @@ class Enhanced_Bayes_Agent(Agent):
                     mid = (low + high) / 2
                     low = max(min_v, mid - eps / 2)
                     high = min(max_v, mid + eps / 2)
-                    if high - low < eps:  # 极端情况下再扩一点点
+                    if high - low < eps:  # Expand slightly in extreme cases
                         high = min(max_v, low + eps)
                 return low, high
 
-            V0_low, V0_high = _safe_bounds(ideal_V0, V0_range, 0.8, V0_max)  # 提升最小力度，避免0或极小力度导致数值问题
-            phi_low, phi_high = _safe_bounds(ideal_phi, phi_range, -720.0, 1080.0)  # 放宽允许范围，内部会再取模
+            V0_low, V0_high = _safe_bounds(ideal_V0, V0_range, 0.8, V0_max)  # Raise min power to avoid numerical issues
+            phi_low, phi_high = _safe_bounds(ideal_phi, phi_range, -720.0, 1080.0)  # Broaden range; will mod internally
 
             pbounds = {
                 'V0': (V0_low, V0_high),
@@ -427,7 +427,7 @@ class Enhanced_Bayes_Agent(Agent):
                 'b': (-offset_range, offset_range)
             }
             
-            # 步骤4: 定义增强奖励函数（考虑首次碰撞、白球落袋、黑8+白球同落）
+            # Step 4: Define enhanced reward (first contact, cue scratch, cue+8 pocketed)
             valid_ball_ids = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'}
             
             def reward_fn_wrapper(V0, phi, theta, a, b):
@@ -437,53 +437,53 @@ class Enhanced_Bayes_Agent(Agent):
                 shot = pt.System(table=sim_table, balls=sim_balls, cue=cue)
                 
                 try:
-                    # 处理角度边界
+                    # Normalize angle bounds
                     phi_normalized = phi % 360
                     shot.cue.set_state(V0=V0, phi=phi_normalized, theta=theta, a=a, b=b)
                     
-                    # 使用超时保护（避免物理引擎卡死）
+                    # Use timeout protection (avoid the physics engine hanging)
                     if not simulate_with_timeout(shot, timeout=15):
-                        return 0  # 超时返回中性分数
+                        return 0  # On timeout, return a neutral score
                 except Exception as e:
                     return -500
                 
-                # 基础得分
+                # Base score
                 score = analyze_shot_for_reward(
                     shot=shot,
                     last_state=last_state_snapshot,
                     player_targets=my_targets
                 )
                 
-                # 额外检测：分析模拟结果
+                # Additional checks: inspect simulation outcome
                 first_contact = self._analyze_first_contact(shot, valid_ball_ids)
                 
-                # 检测白球和黑8是否都落袋（致命犯规）
+                # Check whether both cue ball and 8-ball are pocketed (fatal foul)
                 cue_pocketed = shot.balls['cue'].state.s == 4
                 eight_pocketed = '8' in shot.balls and shot.balls['8'].state.s == 4 and last_state_snapshot['8'].state.s != 4
                 
                 if cue_pocketed and eight_pocketed:
-                    # 白球+黑8同时落袋 - 最严重的犯规
+                    # Cue ball + 8-ball pocketed together: most severe foul
                     score -= self.scratch_eight_penalty
                 elif cue_pocketed:
-                    # 仅白球落袋
+                    # Cue ball pocketed only
                     score -= self.cue_pocket_penalty
                 
-                # 首次碰撞惩罚
+                # First-contact penalty
                 if first_contact is not None:
                     if first_contact not in my_targets:
                         if first_contact == '8' and my_targets != ['8']:
-                            score -= self.eight_ball_penalty  # 误打黑八
+                            score -= self.eight_ball_penalty  # Illegal 8-ball hit
                         else:
-                            score -= self.wrong_ball_penalty  # 误打对方球
+                            score -= self.wrong_ball_penalty  # Hit opponent ball first
                 
-                # 打黑8时的额外保护：即使没落袋，速度太大也要惩罚
+                # Extra protection when shooting the 8-ball: penalize excessive speed even without a pot
                 if is_shooting_eight and V0 > self.eight_ball_V0_max:
                     score -= (V0 - self.eight_ball_V0_max) * 20
                 
                 return score
             
-            # 步骤5: 贝叶斯优化
-            print(f"[NewAgent] 在几何解附近优化...")
+            # Step 5: Bayesian optimization
+            print("[NewAgent] Optimizing near the geometric solution...")
             
             gpr = GaussianProcessRegressor(
                 kernel=Matern(nu=2.5),
@@ -500,12 +500,12 @@ class Enhanced_Bayes_Agent(Agent):
             )
             optimizer._gp = gpr
             
-            # 添加几何解作为初始探测点
+            # Add the geometric solution as an initial probe point
             optimizer.probe(
                 params={
                     'V0': np.clip(ideal_V0, V0_low, V0_high),
                     'phi': np.clip(ideal_phi, phi_low, phi_high),
-                    'theta': 5.0,  # 小仰角
+                    'theta': 5.0,  # Small elevation
                     'a': 0.0,
                     'b': 0.0
                 },
@@ -522,8 +522,8 @@ class Enhanced_Bayes_Agent(Agent):
             best_score = best_result['target']
             
             if best_score < 10:
-                print(f"[NewAgent] 优化后分数仍然很低 ({best_score:.2f})，使用几何解。")
-                # 回退到几何解（打黑8时使用更保守的速度）
+                print(f"[NewAgent] Optimized score is still low ({best_score:.2f}); using the geometric solution.")
+                # Fall back to the geometric solution (use a more conservative speed for the 8-ball)
                 fallback_V0 = min(ideal_V0, self.eight_ball_V0_max) if is_shooting_eight else ideal_V0
                 action = {
                     'V0': fallback_V0,
@@ -541,32 +541,32 @@ class Enhanced_Bayes_Agent(Agent):
                     'b': float(best_params['b'])
                 }
             
-            print(f"[NewAgent] 最终决策 (得分: {best_score:.2f}): "
+            print(f"[NewAgent] Final decision (score: {best_score:.2f}): "
                   f"V0={action['V0']:.2f}, phi={action['phi']:.2f}, "
                   f"θ={action['theta']:.2f}, a={action['a']:.3f}, b={action['b']:.3f}")
             
             return action
             
         except Exception as e:
-            print(f"[NewAgent] 决策时发生错误: {e}")
+            print(f"[NewAgent] Error during decision: {e}")
             import traceback
             traceback.print_exc()
             return self._random_action()
 
 
 class GeometricAgent(Agent):
-    """纯几何决策 Agent（无贝叶斯优化）
+    """Pure geometry decision agent (no Bayesian optimization)
     
-    特点：
-    - 完全基于几何计算，无需物理仿真优化
-    - 速度极快，适合实时决策
-    - 使用启发式规则确保安全性和准确性
+    Characteristics:
+    - Fully geometry-based; no physics-simulation optimization
+    - Very fast, suitable for real-time decision-making
+    - Uses heuristic rules to improve safety and accuracy
     """
     
     def __init__(self):
         super().__init__()
         
-        # 导入几何工具
+        # Import geometry utilities
         from utils.utils import (
             select_best_target,
             calculate_aim_point_for_pocket,
@@ -588,43 +588,43 @@ class GeometricAgent(Agent):
         self.predict_first_contact_ball = predict_first_contact_ball
         self.check_eight_ball_scratch_risk = check_eight_ball_scratch_risk
         
-        # 几何参数调整系数
-        self.angle_adjustment_factor = 0.98  # 角度微调系数（应对系统性偏差）
-        self.velocity_safety_factor = 0.9    # 速度安全系数（避免过猛）
+        # Geometry parameter adjustment factors
+        self.angle_adjustment_factor = 0.98  # Angle fine-tuning factor (counter systematic bias)
+        self.velocity_safety_factor = 0.9    # Speed safety factor (avoid excessive power)
         
-        # 打黑8时的保守参数
-        self.eight_ball_velocity_limit = 4.5  # 打黑8最大速度
-        self.eight_ball_theta_limit = 20      # 打黑8最大仰角
+        # Conservative parameters when shooting the 8-ball
+        self.eight_ball_velocity_limit = 4.5  # Max speed for the 8-ball
+        self.eight_ball_theta_limit = 20      # Max elevation for the 8-ball
         
-        # 一般情况下的参数
-        self.normal_theta_max = 35            # 普通击球最大仰角
-        self.risky_velocity_limit = 3.0       # 高风险情况速度限制
+        # Default parameters
+        self.normal_theta_max = 35            # Max elevation for normal shots
+        self.risky_velocity_limit = 3.0       # Speed limit for high-risk situations
         
-        print("GeometricAgent (Pure Geometry, No Bayesian Optimization) 已初始化。")
+        print("GeometricAgent (Pure Geometry, No Bayesian Optimization) initialized.")
     
     def print_config(self):
-        """打印所有重要超参数"""
+        """Print all important hyperparameters"""
         print("\n" + "="*50)
-        print("[GeometricAgent 超参数配置]")
-        print(f"  几何调整参数:")
-        print(f"    - angle_adjustment_factor (角度微调系数): {self.angle_adjustment_factor}")
-        print(f"    - velocity_safety_factor (速度安全系数): {self.velocity_safety_factor}")
-        print(f"  打黑8特殊参数:")
+        print("[GeometricAgent Hyperparameter Configuration]")
+        print("  Geometry adjustment parameters:")
+        print(f"    - angle_adjustment_factor (angle fine-tuning): {self.angle_adjustment_factor}")
+        print(f"    - velocity_safety_factor (speed safety): {self.velocity_safety_factor}")
+        print("  8-ball special parameters:")
         print(f"    - eight_ball_velocity_limit: {self.eight_ball_velocity_limit} m/s")
         print(f"    - eight_ball_theta_limit: {self.eight_ball_theta_limit}°")
-        print(f"  一般击球参数:")
-        print(f"    - normal_theta_max (普通最大仰角): {self.normal_theta_max}°")
-        print(f"    - risky_velocity_limit (高风险速度限制): {self.risky_velocity_limit} m/s")
-        print(f"  特点: 纯几何计算，无贝叶斯优化，速度极快")
+        print("  General shot parameters:")
+        print(f"    - normal_theta_max (max elevation for normal shots): {self.normal_theta_max}°")
+        print(f"    - risky_velocity_limit (speed limit in high-risk cases): {self.risky_velocity_limit} m/s")
+        print("  Notes: pure geometry, no Bayesian optimization, very fast")
         print("="*50)
     
     def _calculate_cut_angle_adjustment(self, cue_pos, target_pos, pocket_pos):
-        """计算切球角度调整
+        """Compute cut-shot angle adjustments
         
-        根据白球-目标球-球袋的几何关系，计算需要的切球角度
-        返回建议的theta和offset调整
+        Based on cue–object–pocket geometry, compute a suitable cut angle.
+        Returns recommended theta and tip-offset adjustments.
         """
-        # 计算入射向量和出射向量的夹角
+        # Compute the angle between the incident and outgoing vectors
         vec_in = (target_pos - cue_pos)[:2]
         vec_out = (pocket_pos - target_pos)[:2]
         
@@ -635,21 +635,21 @@ class GeometricAgent(Agent):
         angle_rad = math.acos(dot_product)
         angle_deg = math.degrees(angle_rad)
         
-        # 根据角度决定theta和offset
-        if angle_deg < 15:  # 直线球
+        # Choose theta and offsets based on the cut angle
+        if angle_deg < 15:  # Straight-in shot
             theta = 3.0
             a_offset = 0.0
             b_offset = 0.0
-        elif angle_deg < 45:  # 小角度切球
+        elif angle_deg < 45:  # Small cut shot
             theta = 8.0
-            # 轻微的侧旋帮助控球
+            # Slight sidespin helps with cue-ball control
             a_offset = 0.05 if angle_deg < 30 else 0.10
             b_offset = 0.0
-        elif angle_deg < 90:  # 中等角度切球
+        elif angle_deg < 90:  # Medium cut shot
             theta = 15.0
             a_offset = 0.15
             b_offset = 0.05
-        else:  # 大角度切球（困难球）
+        else:  # Large cut shot (difficult)
             theta = 25.0
             a_offset = 0.20
             b_offset = 0.10
@@ -657,168 +657,168 @@ class GeometricAgent(Agent):
         return theta, a_offset, b_offset, angle_deg
     
     def _adjust_for_distance(self, distance, base_velocity):
-        """根据距离微调速度
+        """Fine-tune speed based on distance
         
-        考虑摩擦力损耗，距离越远需要略微增加速度
+        Account for friction losses: the farther the distance, the more speed is needed.
         """
         if distance < 0.3:
-            # 近距离：轻柔击球
+            # Short distance: gentle stroke
             return base_velocity * 0.85
         elif distance < 0.6:
             return base_velocity * 0.95
         elif distance < 1.0:
             return base_velocity
         elif distance < 1.5:
-            # 中等距离：稍微增加力度
+            # Medium distance: slightly increase power
             return base_velocity * 1.1
         else:
-            # 远距离：显著增加力度，但不超过安全上限
+            # Long distance: significantly increase power, but do not exceed a safe upper bound
             return min(base_velocity * 1.25, 6.5)
     
     def decision(self, balls=None, my_targets=None, table=None):
-        """纯几何决策（无贝叶斯优化）
+        """Pure geometry decision (no Bayesian optimization)
         
-        步骤：
-        1. 选择最佳目标球和球袋
-        2. 计算几何瞄准点和角度
-        3. 根据距离、角度、风险等因素计算速度和击球参数
-        4. 应用安全性检查和调整
-        5. 直接返回几何解（无优化步骤）
+        Steps:
+        1. Choose the best target ball and pocket
+        2. Compute geometric aim point and angle
+        3. Compute speed and shot parameters from distance, angle, and risk
+        4. Apply safety checks and adjustments
+        5. Return the geometric solution directly (no optimization)
         """
         if balls is None or my_targets is None or table is None:
-            print("[GeometricAgent] 缺少必要信息，使用随机动作。")
+            print("[GeometricAgent] Missing required inputs; using a random action.")
             return self._random_action()
         
         try:
-            # 检查目标球是否已清空
+            # Check whether all target balls are already pocketed
             remaining_own = [bid for bid in my_targets if balls[bid].state.s != 4]
             is_shooting_eight = False
             if len(remaining_own) == 0:
                 my_targets = ["8"]
                 is_shooting_eight = True
-                print("[GeometricAgent] 目标球已清空，切换到黑8。⚠️ 进入保守模式！")
+                print("[GeometricAgent] All target balls cleared; switching to the 8-ball. ⚠️ Entering conservative mode!")
             
-            # 步骤1: 选择目标球和球袋
+            # Step 1: Choose target ball and pocket
             cue_pos = balls['cue'].state.rvw[0]
             best_target_id, best_pocket_id, difficulty = self.select_best_target(
                 cue_pos, my_targets, balls, table, avoid_eight=True
             )
             
             if best_target_id is None:
-                print("[GeometricAgent] 未找到有效目标球，使用随机动作。")
+                print("[GeometricAgent] No valid target found; using a random action.")
                 return self._random_action()
             
             target_pos = balls[best_target_id].state.rvw[0]
             pocket_pos = table.pockets[best_pocket_id].center
             
-            # 步骤2: 风险评估
+            # Step 2: Risk assessment
             eight_in_path, eight_dist = self.check_eight_ball_in_path(cue_pos, target_pos, balls)
             cue_pocket_risk, risky_pocket = self.check_cue_ball_pocket_risk(cue_pos, target_pos, table)
             
-            # 步骤3: 计算几何瞄准参数
+            # Step 3: Compute geometric aiming parameters
             aim_point = self.calculate_aim_point_for_pocket(cue_pos, target_pos, pocket_pos)
             
             if aim_point is None:
-                print("[GeometricAgent] 无法计算瞄准点，使用随机动作。")
+                print("[GeometricAgent] Failed to compute aim point; using a random action.")
                 return self._random_action()
             
-            # 计算理想角度
+            # Compute ideal angle
             ideal_phi = self.calculate_angle_to_aim_point(cue_pos, aim_point)
             
-            # 应用角度调整因子
+            # Apply angle adjustment factor
             phi = ideal_phi * self.angle_adjustment_factor
             
-            # 步骤4: 计算速度
+            # Step 4: Compute speed
             distance = self.calculate_distance(cue_pos, target_pos)
             base_velocity = self.calculate_recommended_velocity(distance)
             
-            # 根据距离微调
+            # Fine-tune by distance
             velocity = self._adjust_for_distance(distance, base_velocity)
             
-            # 应用速度安全系数
+            # Apply speed safety factor
             velocity = velocity * self.velocity_safety_factor
             
-            # 步骤5: 计算切球参数
+            # Step 5: Compute cut-shot parameters
             theta, a_offset, b_offset, cut_angle = self._calculate_cut_angle_adjustment(
                 cue_pos, target_pos, pocket_pos
             )
             
-            # 步骤6: 根据特殊情况调整
+            # Step 6: Adjust for special conditions
             warning_msg = ""
             
-            # 打黑8时的特殊处理
+            # Special handling when shooting the 8-ball
             if is_shooting_eight:
                 scratch_risk, risk_type = self.check_eight_ball_scratch_risk(
                     cue_pos, target_pos, pocket_pos, balls
                 )
                 
-                # 极度保守的黑8策略
+                # Highly conservative 8-ball strategy
                 velocity = min(velocity, self.eight_ball_velocity_limit)
                 theta = min(theta, self.eight_ball_theta_limit)
                 
-                # 如果scratch风险高，进一步降低速度
+                # If scratch risk is high, reduce speed further
                 if scratch_risk > 0.3:
                     velocity = velocity * (1.0 - scratch_risk * 0.5)
-                    warning_msg += f" (Scratch风险={scratch_risk:.2f})"
+                    warning_msg += f" (scratch risk={scratch_risk:.2f})"
                 
-                # 黑8时尽量中心击球
+                # Use a more centered hit for the 8-ball
                 a_offset = a_offset * 0.5
                 b_offset = b_offset * 0.5
                 
-                print(f"[GeometricAgent] 黑8模式：V0={velocity:.2f}, θ={theta:.2f}°{warning_msg}")
+                print(f"[GeometricAgent] 8-ball mode: V0={velocity:.2f}, θ={theta:.2f}°{warning_msg}")
             
-            # 黑八在路径上的处理
+            # Handling when the 8-ball is on/near the path
             elif eight_in_path:
-                # 尝试通过调整角度避开黑八
-                # 这里使用简单策略：略微偏离理想角度
+                # Try to avoid the 8-ball by adjusting the angle
+                # Simple strategy: slightly deviate from the ideal angle
                 phi_adjustment = 2.0 if eight_dist < 0.1 else 1.0
                 phi = (phi + phi_adjustment) % 360
                 
-                # 降低速度以减少意外碰撞
+                # Reduce speed to mitigate accidental collisions
                 velocity = min(velocity, 4.0)
-                warning_msg += " (避让黑8)"
+                warning_msg += " (avoiding the 8-ball)"
             
-            # 白球落袋风险高的处理
+            # Handling for high cue-ball scratch risk
             if cue_pocket_risk > 0.5:
-                # 大幅降低速度
+                # Reduce speed significantly
                 velocity = min(velocity, self.risky_velocity_limit)
-                # 减小仰角，避免跟进
+                # Reduce elevation to avoid follow-through
                 theta = min(theta, 15.0)
-                # 施加后旋（负b值）帮助白球停止
+                # Apply backspin (negative b) to help the cue ball stop
                 b_offset = -0.15
-                warning_msg += f" (白球风险={cue_pocket_risk:.2f})"
+                warning_msg += f" (cue-ball risk={cue_pocket_risk:.2f})"
             
-            # 步骤7: 预判首撞球验证
+            # Step 7: Validate predicted first-contact ball
             predicted_first, _ = self.predict_first_contact_ball(cue_pos, phi, balls)
             
             if predicted_first and predicted_first != best_target_id:
-                # 预判首撞不是目标球，尝试微调角度
+                # Predicted first contact is not the target ball; attempt small angle adjustments
                 if predicted_first in my_targets:
-                    # 首撞是己方其他球，可以接受但不理想
-                    warning_msg += f" (预判首撞={predicted_first})"
+                    # First contact is another of our balls: acceptable but not ideal
+                    warning_msg += f" (predicted first contact={predicted_first})"
                 else:
-                    # 首撞是对方球或黑8，需要调整
-                    # 尝试小幅度调整角度
+                    # First contact is an opponent ball or the 8-ball: must adjust
+                    # Try small angle adjustments
                     for angle_offset in [1.5, -1.5, 3.0, -3.0, 5.0, -5.0]:
                         test_phi = (phi + angle_offset) % 360
                         test_first, _ = self.predict_first_contact_ball(cue_pos, test_phi, balls)
                         if test_first == best_target_id:
                             phi = test_phi
-                            warning_msg += f" (角度调整{angle_offset:+.1f}°)"
+                            warning_msg += f" (angle adjustment {angle_offset:+.1f}°)"
                             break
                     else:
-                        # 无法调整，使用原角度但降低速度
+                        # Could not fix; keep the original angle but reduce speed
                         velocity = min(velocity, 2.5)
-                        warning_msg += f" (⚠️首撞风险={predicted_first})"
+                        warning_msg += f" (⚠️ first-contact risk={predicted_first})"
             
-            # 最终边界检查
+            # Final bounds check
             velocity = np.clip(velocity, 0.5, 8.0)
             phi = phi % 360
             theta = np.clip(theta, 0, 90)
             a_offset = np.clip(a_offset, -0.5, 0.5)
             b_offset = np.clip(b_offset, -0.5, 0.5)
             
-            # 构建动作
+            # Build action
             action = {
                 'V0': float(velocity),
                 'phi': float(phi),
@@ -827,39 +827,39 @@ class GeometricAgent(Agent):
                 'b': float(b_offset)
             }
             
-            print(f"[GeometricAgent] 目标: {best_target_id}→{best_pocket_id}, "
-                  f"距离={distance:.3f}m, 切角={cut_angle:.1f}°{warning_msg}")
-            print(f"[GeometricAgent] 决策: V0={action['V0']:.2f}, phi={action['phi']:.2f}, "
+            print(f"[GeometricAgent] Target: {best_target_id}→{best_pocket_id}, "
+                  f"distance={distance:.3f}m, cut angle={cut_angle:.1f}°{warning_msg}")
+            print(f"[GeometricAgent] Decision: V0={action['V0']:.2f}, phi={action['phi']:.2f}, "
                   f"θ={action['theta']:.2f}, a={action['a']:.3f}, b={action['b']:.3f}")
             
             return action
             
         except Exception as e:
-            print(f"[GeometricAgent] 决策时发生错误: {e}")
+            print(f"[GeometricAgent] Error during decision: {e}")
             import traceback
             traceback.print_exc()
             return self._random_action()
 
 
 class MCTSAgent(Agent):
-    """基于蒙特卡洛树搜索(MCTS)的Agent
+    """Agent based on Monte Carlo Tree Search (MCTS)
     
-    核心思想：
-    - 使用几何学生成候选动作（目标球+球袋组合）
-    - 对每个候选动作进行多次蒙特卡洛模拟
-    - 使用UCB公式平衡探索(exploration)与利用(exploitation)
-    - 选择平均奖励最高的动作
+    Core idea:
+    - Use geometry to generate candidate actions (target ball + pocket combinations)
+    - Run multiple Monte Carlo simulations for each candidate action
+    - Use the UCB formula to balance exploration and exploitation
+    - Choose the action with the highest average reward
     
-    特点：
-    - 结合几何先验知识缩小搜索空间
-    - 通过物理仿真评估动作质量
-    - 比纯贝叶斯优化更注重采样多样性
+    Characteristics:
+    - Uses geometric priors to narrow the search space
+    - Evaluates action quality via physics simulation
+    - Emphasizes sampling diversity more than pure Bayesian optimization
     """
     
     def __init__(self):
         super().__init__()
         
-        # 导入几何工具
+        # Import geometry utilities
         from utils.utils import (
             select_best_target,
             calculate_aim_point_for_pocket,
@@ -883,60 +883,60 @@ class MCTSAgent(Agent):
         self.check_eight_ball_scratch_risk = check_eight_ball_scratch_risk
         self.calculate_shot_difficulty = calculate_shot_difficulty
         
-        # MCTS核心参数
-        self.num_simulations = 30          # 总模拟次数
-        self.exploration_weight = 1.41     # UCB探索权重 (sqrt(2))
-        self.num_candidates_per_target = 5 # 每个目标生成的候选动作数
+        # Core MCTS parameters
+        self.num_simulations = 30          # Total simulations
+        self.exploration_weight = 1.41     # UCB exploration weight (sqrt(2))
+        self.num_candidates_per_target = 5 # Candidate actions per target
         
-        # 动作参数扰动范围
-        self.phi_noise_range = 5.0         # 角度扰动范围 ±5°
-        self.V0_noise_range = 1.0          # 速度扰动范围 ±1.0 m/s
-        self.theta_noise_range = 10.0      # 仰角扰动范围 ±10°
-        self.offset_noise_range = 0.15     # 偏移扰动范围 ±0.15
+        # Action-parameter perturbation ranges
+        self.phi_noise_range = 5.0         # Angle noise range ±5°
+        self.V0_noise_range = 1.0          # Speed noise range ±1.0 m/s
+        self.theta_noise_range = 10.0      # Elevation noise range ±10°
+        self.offset_noise_range = 0.15     # Offset noise range ±0.15
         
-        # 打黑8的保守参数
+        # Conservative parameters for the 8-ball
         self.eight_ball_V0_max = 4.5
         self.eight_ball_theta_max = 20
         
-        print("MCTSAgent (Monte Carlo Tree Search) 已初始化。")
+        print("MCTSAgent (Monte Carlo Tree Search) initialized.")
     
     def print_config(self):
-        """打印所有重要超参数"""
+        """Print all important hyperparameters"""
         print("\n" + "="*50)
-        print("[MCTSAgent 超参数配置]")
-        print(f"  MCTS核心参数:")
-        print(f"    - num_simulations (模拟次数): {self.num_simulations}")
-        print(f"    - exploration_weight (UCB探索权重): {self.exploration_weight}")
-        print(f"    - num_candidates_per_target (每目标候选数): {self.num_candidates_per_target}")
-        print(f"  动作扰动范围:")
+        print("[MCTSAgent Hyperparameter Configuration]")
+        print("  Core MCTS parameters:")
+        print(f"    - num_simulations (simulations): {self.num_simulations}")
+        print(f"    - exploration_weight (UCB exploration weight): {self.exploration_weight}")
+        print(f"    - num_candidates_per_target (candidates per target): {self.num_candidates_per_target}")
+        print("  Action perturbation ranges:")
         print(f"    - phi_noise_range: ±{self.phi_noise_range}°")
         print(f"    - V0_noise_range: ±{self.V0_noise_range} m/s")
         print(f"    - theta_noise_range: ±{self.theta_noise_range}°")
         print(f"    - offset_noise_range: ±{self.offset_noise_range}")
-        print(f"  打黑8特殊参数:")
+        print("  8-ball special parameters:")
         print(f"    - eight_ball_V0_max: {self.eight_ball_V0_max} m/s")
         print(f"    - eight_ball_theta_max: {self.eight_ball_theta_max}°")
-        print(f"  特点: 几何先验 + MCTS搜索 + 物理仿真评估")
+        print("  Notes: geometric priors + MCTS search + physics-simulation evaluation")
         print("="*50)
     
     def _generate_candidate_actions(self, balls, my_targets, table, is_shooting_eight=False):
         """
-        使用几何学生成候选动作列表
+        Generate candidate actions using geometry
         
-        思路：
-        1. 遍历所有未进袋的目标球
-        2. 对每个目标球，尝试每个球袋
-        3. 计算几何瞄准参数
-        4. 对基础参数进行随机扰动，生成多个变体
+        Approach:
+        1. Iterate over all unpocketed target balls
+        2. For each target ball, try each pocket
+        3. Compute geometric aiming parameters
+        4. Apply random perturbations to base parameters to generate variants
         
-        返回：
-            list of dict: 候选动作列表
+        Returns:
+            list of dict: Candidate action list
         """
         candidates = []
         cue_pos = balls['cue'].state.rvw[0]
         
         for target_id in my_targets:
-            if balls[target_id].state.s == 4:  # 已进袋
+            if balls[target_id].state.s == 4:  # Already pocketed
                 continue
             
             target_pos = balls[target_id].state.rvw[0]
@@ -944,18 +944,18 @@ class MCTSAgent(Agent):
             for pocket_id, pocket in table.pockets.items():
                 pocket_pos = pocket.center
                 
-                # 计算难度
+                # Compute difficulty
                 difficulty = self.calculate_shot_difficulty(
                     cue_pos, target_pos, pocket_pos, balls,
                     target_id=target_id, my_targets=my_targets
                 )
                 
-                # 检查黑8是否在路径上
+                # Check whether the 8-ball is on/near the path
                 eight_in_path, _ = self.check_eight_ball_in_path(cue_pos, target_pos, balls)
                 if eight_in_path and not is_shooting_eight:
                     difficulty *= 10.0
                 
-                # 计算几何瞄准参数
+                # Compute geometric aiming parameters
                 aim_point = self.calculate_aim_point_for_pocket(cue_pos, target_pos, pocket_pos)
                 if aim_point is None:
                     continue
@@ -967,7 +967,7 @@ class MCTSAgent(Agent):
                 if is_shooting_eight:
                     base_V0 = min(base_V0, self.eight_ball_V0_max)
                 
-                # 生成多个扰动变体
+                # Generate multiple perturbed variants
                 for _ in range(self.num_candidates_per_target):
                     phi = base_phi + np.random.uniform(-self.phi_noise_range, self.phi_noise_range)
                     V0 = base_V0 + np.random.uniform(-self.V0_noise_range, self.V0_noise_range)
@@ -993,7 +993,7 @@ class MCTSAgent(Agent):
         return candidates[:max_candidates]
     
     def _simulate_action(self, action, balls, table, my_targets, last_state_snapshot):
-        """模拟一个动作并返回奖励"""
+        """Simulate an action and return the reward"""
         sim_balls = {bid: copy.deepcopy(ball) for bid, ball in balls.items()}
         sim_table = copy.deepcopy(table)
         cue = pt.Cue(cue_ball_id="cue")
@@ -1020,7 +1020,7 @@ class MCTSAgent(Agent):
         return score
     
     def _ucb_score(self, avg_reward, visit_count, total_visits):
-        """计算UCB分数: avg_reward + c * sqrt(ln(N) / n)"""
+        """Compute UCB score: avg_reward + c * sqrt(ln(N) / n)"""
         if visit_count == 0:
             return float('inf')
         exploitation = avg_reward
@@ -1028,9 +1028,9 @@ class MCTSAgent(Agent):
         return exploitation + exploration
     
     def decision(self, balls=None, my_targets=None, table=None):
-        """MCTS决策主流程"""
+        """Main MCTS decision flow"""
         if balls is None or my_targets is None or table is None:
-            print("[MCTSAgent] 缺少必要信息，使用随机动作。")
+            print("[MCTSAgent] Missing required inputs; using a random action.")
             return self._random_action()
         
         try:
@@ -1041,22 +1041,22 @@ class MCTSAgent(Agent):
             if len(remaining_own) == 0:
                 my_targets = ["8"]
                 is_shooting_eight = True
-                print("[MCTSAgent] 目标球已清空，切换到黑8。⚠️ 进入谨慎模式！")
+                print("[MCTSAgent] All target balls cleared; switching to the 8-ball. ⚠️ Entering cautious mode!")
             
-            # 步骤1: 生成候选动作
+            # Step 1: Generate candidate actions
             candidates = self._generate_candidate_actions(balls, my_targets, table, is_shooting_eight)
             
             if len(candidates) == 0:
-                print("[MCTSAgent] 无候选动作，使用随机动作。")
+                print("[MCTSAgent] No candidate actions; using a random action.")
                 return self._random_action()
             
-            print(f"[MCTSAgent] 生成 {len(candidates)} 个候选动作，开始MCTS搜索...")
+            print(f"[MCTSAgent] Generated {len(candidates)} candidate actions; starting MCTS search...")
             
-            # 初始化统计
+            # Initialize statistics
             visit_counts = [0] * len(candidates)
             total_rewards = [0.0] * len(candidates)
             
-            # 步骤2: MCTS迭代
+            # Step 2: MCTS iterations
             for sim_idx in range(self.num_simulations):
                 total_visits = sum(visit_counts)
                 ucb_scores = [
@@ -1080,7 +1080,7 @@ class MCTSAgent(Agent):
                 visit_counts[selected_idx] += 1
                 total_rewards[selected_idx] += reward
             
-            # 步骤3: 选择最佳动作
+            # Step 3: Select the best action
             avg_rewards = [
                 total_rewards[i] / max(1, visit_counts[i])
                 for i in range(len(candidates))
@@ -1093,13 +1093,13 @@ class MCTSAgent(Agent):
             best_visits = visit_counts[best_idx]
             
             if best_avg_reward < 10:
-                print(f"[MCTSAgent] MCTS最佳奖励较低 ({best_avg_reward:.2f})，回退到最简单目标。")
+                print(f"[MCTSAgent] MCTS best reward is low ({best_avg_reward:.2f}); falling back to the easiest target.")
                 best_candidate = candidates[0]
                 best_action = best_candidate['action']
             
-            print(f"[MCTSAgent] 目标: {best_candidate['target_id']}→{best_candidate['pocket_id']}, "
-                  f"平均奖励={best_avg_reward:.2f}, 访问次数={best_visits}")
-            print(f"[MCTSAgent] 决策: V0={best_action['V0']:.2f}, phi={best_action['phi']:.2f}, "
+            print(f"[MCTSAgent] Target: {best_candidate['target_id']}→{best_candidate['pocket_id']}, "
+                  f"avg reward={best_avg_reward:.2f}, visits={best_visits}")
+            print(f"[MCTSAgent] Decision: V0={best_action['V0']:.2f}, phi={best_action['phi']:.2f}, "
                   f"θ={best_action['theta']:.2f}, a={best_action['a']:.3f}, b={best_action['b']:.3f}")
             
             return {
@@ -1111,58 +1111,58 @@ class MCTSAgent(Agent):
             }
             
         except Exception as e:
-            print(f"[MCTSAgent] 决策时发生错误: {e}")
+            print(f"[MCTSAgent] Error during decision: {e}")
             import traceback
             traceback.print_exc()
             return self._random_action()
 
 
 class EnsembleVotingAgent(Agent):
-    """集体投票Agent（Ensemble Voting Agent）
+    """Ensemble voting agent
     
-    核心思想：
-    - 调用多个子Agent（NewAgent, MCTSAgent）分别生成候选动作
-    - 对每个候选动作进行物理仿真评估
-    - 选择得分最高的动作作为最终决策
+    Core idea:
+    - Call multiple sub-agents (NewAgent, MCTSAgent) to generate candidate actions
+    - Evaluate each candidate via physics simulation
+    - Select the highest-scoring action as the final decision
     
-    优势：
-    - 结合多种决策策略的优点
-    - 通过模拟验证减少失误
-    - 更加稳健的决策
+    Advantages:
+    - Combines strengths of multiple decision strategies
+    - Reduces mistakes via simulation-based validation
+    - Produces more robust decisions
     """
     
     def __init__(self):
         super().__init__()
         
-        # 初始化子Agent
+        # Initialize sub-agents
         self.new_agent = Enhanced_Bayes_Agent()
         self.mcts_agent = MCTSAgent()
         
-        # 评估参数
-        self.num_eval_simulations = 3  # 每个动作评估的模拟次数
+        # Evaluation parameters
+        self.num_eval_simulations = 3  # Simulations per action evaluation
         
-        print("EnsembleVotingAgent (Ensemble Voting) 已初始化。")
+        print("EnsembleVotingAgent (Ensemble Voting) initialized.")
     
     def print_config(self):
-        """打印所有重要超参数"""
+        """Print all important hyperparameters"""
         print("\n" + "="*50)
-        print("[EnsembleVotingAgent 超参数配置]")
-        print(f"  子Agent:")
-        print(f"    - NewAgent (几何+贝叶斯优化)")
-        print(f"    - MCTSAgent (几何+MCTS搜索)")
-        print(f"  评估参数:")
-        print(f"    - num_eval_simulations (每动作模拟次数): {self.num_eval_simulations}")
-        print(f"  特点: 多策略集成投票，选择最高分动作")
+        print("[EnsembleVotingAgent Hyperparameter Configuration]")
+        print("  Sub-agents:")
+        print("    - NewAgent (geometry + Bayesian optimization)")
+        print("    - MCTSAgent (geometry + MCTS search)")
+        print("  Evaluation parameters:")
+        print(f"    - num_eval_simulations (sims per action): {self.num_eval_simulations}")
+        print("  Notes: multi-strategy ensemble voting, selects the highest-scoring action")
         print("="*50)
-        print("\n--- NewAgent 配置 ---")
+        print("\n--- NewAgent config ---")
         self.new_agent.print_config()
-        print("\n--- MCTSAgent 配置 ---")
+        print("\n--- MCTSAgent config ---")
         self.mcts_agent.print_config()
     
     def _evaluate_action(self, action, balls, table, my_targets, last_state_snapshot):
-        """评估单个动作的得分
+        """Evaluate a single action's score
         
-        通过多次模拟取平均分，减少随机性影响
+        Uses multiple simulations and averages the result to reduce randomness.
         """
         total_score = 0.0
         valid_sims = 0
@@ -1202,33 +1202,33 @@ class EnsembleVotingAgent(Agent):
         return total_score / valid_sims
     
     def decision(self, balls=None, my_targets=None, table=None):
-        """集体投票决策
+        """Ensemble voting decision
         
-        步骤：
-        1. 调用NewAgent获取候选动作
-        2. 调用MCTSAgent获取候选动作
-        3. 对每个候选动作进行模拟评估
-        4. 选择得分最高的动作
+        Steps:
+        1. Call NewAgent to get a candidate action
+        2. Call MCTSAgent to get a candidate action
+        3. Evaluate each candidate via simulation
+        4. Choose the highest-scoring action
         """
         if balls is None or my_targets is None or table is None:
-            print("[EnsembleVotingAgent] 缺少必要信息，使用随机动作。")
+            print("[EnsembleVotingAgent] Missing required inputs; using a random action.")
             return self._random_action()
         
         try:
-            # 保存状态快照
+            # Save state snapshot
             last_state_snapshot = {bid: copy.deepcopy(ball) for bid, ball in balls.items()}
             
-            # 检查目标球是否已清空
+            # Check whether all target balls are already pocketed
             remaining_own = [bid for bid in my_targets if balls[bid].state.s != 4]
             if len(remaining_own) == 0:
                 my_targets = ["8"]
-                print("[EnsembleVotingAgent] 目标球已清空，切换到黑8。")
+                print("[EnsembleVotingAgent] All target balls cleared; switching to the 8-ball.")
             
-            # 步骤1: 收集候选动作
+            # Step 1: Collect candidate actions
             candidate_actions = []
             
-            # 从NewAgent获取动作
-            print("[EnsembleVotingAgent] 调用 NewAgent...")
+            # Get an action from NewAgent
+            print("[EnsembleVotingAgent] Calling NewAgent...")
             try:
                 new_agent_action = self.new_agent.decision(balls, my_targets, table)
                 if new_agent_action:
@@ -1237,10 +1237,10 @@ class EnsembleVotingAgent(Agent):
                         'source': 'NewAgent'
                     })
             except Exception as e:
-                print(f"[EnsembleVotingAgent] NewAgent决策失败: {e}")
+                print(f"[EnsembleVotingAgent] NewAgent decision failed: {e}")
             
-            # 从MCTSAgent获取动作
-            print("[EnsembleVotingAgent] 调用 MCTSAgent...")
+            # Get an action from MCTSAgent
+            print("[EnsembleVotingAgent] Calling MCTSAgent...")
             try:
                 mcts_agent_action = self.mcts_agent.decision(balls, my_targets, table)
                 if mcts_agent_action:
@@ -1249,14 +1249,14 @@ class EnsembleVotingAgent(Agent):
                         'source': 'MCTSAgent'
                     })
             except Exception as e:
-                print(f"[EnsembleVotingAgent] MCTSAgent决策失败: {e}")
+                print(f"[EnsembleVotingAgent] MCTSAgent decision failed: {e}")
             
             if len(candidate_actions) == 0:
-                print("[EnsembleVotingAgent] 无候选动作，使用随机动作。")
+                print("[EnsembleVotingAgent] No candidate actions; using a random action.")
                 return self._random_action()
             
-            # 步骤2: 评估每个候选动作
-            print(f"[EnsembleVotingAgent] 评估 {len(candidate_actions)} 个候选动作...")
+            # Step 2: Evaluate each candidate action
+            print(f"[EnsembleVotingAgent] Evaluating {len(candidate_actions)} candidate actions...")
             
             best_action = None
             best_score = float('-inf')
@@ -1270,23 +1270,22 @@ class EnsembleVotingAgent(Agent):
                     action, balls, table, my_targets, last_state_snapshot
                 )
                 
-                print(f"[EnsembleVotingAgent] {source} 动作得分: {score:.2f}")
+                print(f"[EnsembleVotingAgent] {source} action score: {score:.2f}")
                 
                 if score > best_score:
                     best_score = score
                     best_action = action
                     best_source = source
             
-            # 步骤3: 返回最佳动作
-            print(f"[EnsembleVotingAgent] 最终选择: {best_source} (得分: {best_score:.2f})")
-            print(f"[EnsembleVotingAgent] 决策: V0={best_action['V0']:.2f}, phi={best_action['phi']:.2f}, "
+            # Step 3: Return the best action
+            print(f"[EnsembleVotingAgent] Final selection: {best_source} (score: {best_score:.2f})")
+            print(f"[EnsembleVotingAgent] Decision: V0={best_action['V0']:.2f}, phi={best_action['phi']:.2f}, "
                   f"θ={best_action['theta']:.2f}, a={best_action['a']:.3f}, b={best_action['b']:.3f}")
             
             return best_action
             
         except Exception as e:
-            print(f"[EnsembleVotingAgent] 决策时发生错误: {e}")
+            print(f"[EnsembleVotingAgent] Error during decision: {e}")
             import traceback
             traceback.print_exc()
             return self._random_action()
-
