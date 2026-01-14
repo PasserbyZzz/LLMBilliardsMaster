@@ -76,12 +76,10 @@ We have implemented the following algorithmic agents:
 - MCTSAgent
 - EnsembleVotingAgent
 
-
-You can find their implementation here:[Algorithmic Agents](/agent/AlgorithmicAgent/AlgorithmicAgents.py)
+You can find their implementation here: [Algorithmic Agents](/agent/AlgorithmicAgent/AlgorithmicAgents.py)
 
 Their empirical winning rates are shown below:
 ![winning rate](/images/different_model_performance_comparison.png)
-
 
 ## Contact
 
@@ -108,3 +106,4 @@ If you find this work helpful, please cite our project:
 ```
 
 ## **Wish for your Star⭐!**
+
