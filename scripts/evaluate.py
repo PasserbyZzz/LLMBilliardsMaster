@@ -6,7 +6,7 @@ from utils.utils import set_random_seed
 from env.poolenv import PoolEnv
 from agent.BasicAgent.basic_agent import BasicAgent
 from agent.LLMAgent.llm_agent import LLMAgent
-
+from agent.AlgorithmicAgent.AlgorithmicAgents import Enhanced_Bayes_Agent, MCTSAgent, EnsembleVotingAgent
 # Set random seed
 set_random_seed(enable=False, seed=42)
 
@@ -14,7 +14,7 @@ env = PoolEnv()
 results = {'AGENT_A_WIN': 0, 'AGENT_B_WIN': 0, 'SAME': 0}
 n_games = 40  # number of games
 
-agent_a, agent_b = BasicAgent(), LLMAgent()
+agent_a, agent_b = BasicAgent(), Enhanced_Bayes_Agent()
 
 players = [agent_a, agent_b]  # turn order
 target_ball_choice = ['solid', 'solid', 'stripe', 'stripe']  # ball type rotation
